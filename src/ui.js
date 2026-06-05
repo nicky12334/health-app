@@ -36,6 +36,22 @@ function progressBar(label, value, target, unit) {
     </div>`
 }
 
+// Compact color-coded macro bar used inside the Today hero.
+function macroStat(label, value, target, cls) {
+  const pct = target > 0 ? Math.min(100, (value / target) * 100) : 0
+  const over = target > 0 && value > target
+  return `
+    <div class="macro-stat">
+      <div class="macro-top">
+        <span class="macro-name">${esc(label)}</span>
+        <span class="macro-val ${over ? 'over' : ''}">${fmt(value)}<i>/${fmt(target)}g</i></span>
+      </div>
+      <div class="bar-track mini">
+        <div class="bar-fill ${cls} ${over ? 'over' : ''}" style="width:${pct}%"></div>
+      </div>
+    </div>`
+}
+
 function niceDate(key) {
   const [y, m, d] = key.split('-').map(Number)
   const dt = new Date(y, m - 1, d)
@@ -53,19 +69,44 @@ export function renderToday(el, api) {
   const day = getDay(date)
   const totals = dayTotals(date)
 
-  const goalBanner = targets
-    ? `
-      <section class="card">
-        ${progressBar('Calories', totals.kcal, targets.calories, 'kcal')}
-        ${progressBar('Protein', totals.protein, targets.protein, 'g')}
-        ${progressBar('Carbs', totals.carbs, targets.carbs, 'g')}
-        ${progressBar('Fat', totals.fat, targets.fat, 'g')}
+  // Calorie ring: r=52 in a 120 viewBox → circumference ≈ 326.726.
+  const RING_C = 326.726
+  let goalBanner
+  if (targets) {
+    const goal = targets.calories
+    const pct = goal > 0 ? Math.min(1, totals.kcal / goal) : 0
+    const over = totals.kcal > goal
+    const dashOffset = RING_C * (1 - pct)
+    const remaining = Math.round(goal - totals.kcal)
+    const ringNum = over ? `+${Math.abs(remaining)}` : remaining
+    const ringLabel = over ? 'over' : 'kcal left'
+
+    goalBanner = `
+      <section class="card hero">
+        <div class="ring-wrap">
+          <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-fill ${over ? 'over' : ''}" cx="60" cy="60" r="52"
+              stroke-dasharray="${RING_C}" stroke-dashoffset="${dashOffset}"></circle>
+          </svg>
+          <div class="ring-center">
+            <b>${ringNum}</b><span>${ringLabel}</span>
+          </div>
+        </div>
+        <div class="hero-side">
+          <p class="hero-eaten"><b>${fmt(totals.kcal)}</b> of ${fmt(goal)} kcal eaten</p>
+          ${macroStat('Protein', totals.protein, targets.protein, 'p')}
+          ${macroStat('Carbs', totals.carbs, targets.carbs, 'c')}
+          ${macroStat('Fat', totals.fat, targets.fat, 'f')}
+        </div>
       </section>`
-    : `
+  } else {
+    goalBanner = `
       <section class="card prompt">
         <p>Set up your profile to get a daily calorie &amp; macro goal.</p>
         <button class="btn" id="go-profile">Set up profile</button>
       </section>`
+  }
 
   const microKeys = Object.keys(totals.micros)
   const microSection = microKeys.length
@@ -133,7 +174,9 @@ export function renderToday(el, api) {
     .join('')
 
   el.innerHTML = `
-    <header class="screen-head"><h1>Today</h1><span class="muted">${niceDate(date)}</span></header>
+    <header class="screen-head">
+      <div><p class="eyebrow">${niceDate(date)}</p><h1>Today</h1></div>
+    </header>
     ${goalBanner}
 
     <section class="card">
