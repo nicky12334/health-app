@@ -9,7 +9,7 @@ import {
   ACTIVITY_FACTORS,
   GOALS
 } from './profile.js'
-import { MICRO_SPEC } from './nutrition.js'
+import { MICRO_SPEC, microTargets } from './nutrition.js'
 import { novaLabel, novaClass } from './additives.js'
 
 const esc = (s) =>
@@ -50,6 +50,31 @@ function macroStat(label, value, target, cls) {
         <div class="bar-fill ${cls} ${over ? 'over' : ''}" style="width:${pct}%"></div>
       </div>
     </div>`
+}
+
+// Micronutrient bar: goals fill toward the target, limits warn when exceeded.
+function microBar(label, value, target, unit, kind) {
+  const pct = target > 0 ? Math.min(100, (value / target) * 100) : 0
+  const over = kind === 'limit' && value > target
+  const met = kind === 'goal' && value >= target
+  return `
+    <div class="bar-row">
+      <div class="bar-head">
+        <span>${esc(label)}${met ? ' <span class="met">✓</span>' : ''}</span>
+        <span class="bar-val ${over ? 'over' : ''}">${fmt(value)} / ${fmt(target)} ${unit}</span>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill ${over ? 'over' : ''} ${met ? 'met' : ''}" style="width:${pct}%"></div>
+      </div>
+    </div>`
+}
+
+// Colored Nutri-Score badge (A–E). Returns '' when the grade is unknown.
+function nutriScoreBadge(grade) {
+  if (!grade) return ''
+  return `<div class="nutriscore ns-${esc(grade)}" title="Nutri-Score ${grade.toUpperCase()}">
+    <span>Nutri-Score</span><b>${grade.toUpperCase()}</b>
+  </div>`
 }
 
 function niceDate(key) {
@@ -109,21 +134,18 @@ export function renderToday(el, api) {
   }
 
   const microKeys = Object.keys(totals.micros)
+  const microGoals = microTargets(profile)
   const microSection = microKeys.length
     ? `
       <section class="card">
         <h2>Micronutrients</h2>
-        <div class="micro-grid">
-          ${microKeys
-            .map((k) => {
-              const spec = MICRO_SPEC[k]
-              if (!spec) return ''
-              return `<div class="micro"><span>${esc(spec.label)}</span><b>${fmt(
-                totals.micros[k]
-              )} ${spec.unit}</b></div>`
-            })
-            .join('')}
-        </div>
+        ${microKeys
+          .map((k) => {
+            const spec = MICRO_SPEC[k]
+            if (!spec) return ''
+            return microBar(spec.label, totals.micros[k], microGoals[k], spec.unit, spec.kind)
+          })
+          .join('')}
       </section>`
     : ''
 
@@ -255,21 +277,10 @@ export function renderScanResult(resultEl, product, api, source = 'scan') {
   }
 
   const defaultG = product.servingG || 100
-  resultEl.innerHTML = `
-    <section class="card">
-      <div class="prod-head">
-        ${product.imageUrl ? `<img src="${esc(product.imageUrl)}" alt="" class="prod-img"/>` : ''}
-        <div>
-          <h2>${esc(product.name)}</h2>
-          ${product.brand ? `<p class="muted">${esc(product.brand)}</p>` : ''}
-        </div>
-      </div>
+  const microKeys = Object.keys(product.per100.micros)
 
-      <div class="per100">
-        per 100${'g'}: ${fmt(product.per100.kcal)} kcal · P${fmt(product.per100.protein)}
-        C${fmt(product.per100.carbs)} F${fmt(product.per100.fat)}
-      </div>
-
+  const moreInfo = `
+    <div id="more-info" class="info-block" hidden>
       ${
         product.nova
           ? `<p class="nova ${novaClass(product.nova)}">NOVA ${product.nova} — ${esc(
@@ -278,12 +289,52 @@ export function renderScanResult(resultEl, product, api, source = 'scan') {
           : ''
       }
       ${
-        product.additives.length
-          ? `<p class="muted">Additives: ${product.additives
-              .map((a) => `${esc(a.code)}`)
-              .join(', ')}</p>`
-          : ''
+        microKeys.length
+          ? `<h3 class="info-h">Micronutrients <span class="muted">/ 100 g</span></h3>
+             <div class="micro-grid">
+               ${microKeys
+                 .map((k) => {
+                   const spec = MICRO_SPEC[k]
+                   if (!spec) return ''
+                   return `<div class="micro"><span>${esc(spec.label)}</span><b>${fmt(
+                     product.per100.micros[k]
+                   )} ${spec.unit}</b></div>`
+                 })
+                 .join('')}
+             </div>`
+          : '<p class="muted">No micronutrient data for this product.</p>'
       }
+      <h3 class="info-h">Additives</h3>
+      ${
+        product.additives.length
+          ? `<ul class="additive-list">${product.additives
+              .map((a) => `<li><b>${esc(a.code)}</b> ${esc(a.name)}</li>`)
+              .join('')}</ul>`
+          : '<p class="muted">No additives listed. 🎉</p>'
+      }
+    </div>`
+
+  resultEl.innerHTML = `
+    <section class="card">
+      <div class="prod-head">
+        ${product.imageUrl ? `<img src="${esc(product.imageUrl)}" alt="" class="prod-img"/>` : ''}
+        <div class="prod-title">
+          <h2>${esc(product.name)}</h2>
+          ${product.brand ? `<p class="muted">${esc(product.brand)}</p>` : ''}
+        </div>
+        ${nutriScoreBadge(product.nutriscore)}
+      </div>
+
+      <div class="per100">
+        per 100 g: ${fmt(product.per100.kcal)} kcal · P${fmt(product.per100.protein)}
+        C${fmt(product.per100.carbs)} F${fmt(product.per100.fat)}
+      </div>
+
+      <button type="button" id="more-info-btn" class="btn-ghost" aria-expanded="false">
+        Additional information
+        <span class="chev">▾</span>
+      </button>
+      ${moreInfo}
 
       <form id="portion-form" class="portion">
         <label>Portion (g)
@@ -293,6 +344,15 @@ export function renderScanResult(resultEl, product, api, source = 'scan') {
         <button class="btn" type="submit">Add to today</button>
       </form>
     </section>`
+
+  const moreBtn = resultEl.querySelector('#more-info-btn')
+  const moreBox = resultEl.querySelector('#more-info')
+  moreBtn.addEventListener('click', () => {
+    const open = moreBox.hidden
+    moreBox.hidden = !open
+    moreBtn.setAttribute('aria-expanded', String(open))
+    moreBtn.classList.toggle('open', open)
+  })
 
   resultEl.querySelector('#portion-form').addEventListener('submit', (ev) => {
     ev.preventDefault()
@@ -327,6 +387,9 @@ function recentRow(e, i) {
 }
 
 function searchRow(p, i) {
+  const ns = p.nutriscore
+    ? `<span class="ns-mini ns-${esc(p.nutriscore)}" title="Nutri-Score ${p.nutriscore.toUpperCase()}">${p.nutriscore.toUpperCase()}</span>`
+    : ''
   return `
     <button class="food-row" data-search="${i}">
       ${foodThumb(p.imageUrl, p.name)}
@@ -334,6 +397,7 @@ function searchRow(p, i) {
         <div class="food-name">${esc(p.name)}</div>
         <div class="food-sub">${p.brand ? esc(p.brand) + ' · ' : ''}per 100 g</div>
       </div>
+      ${ns}
       <div class="food-kcal"><b>${fmt(p.per100.kcal)}</b><span>kcal</span></div>
       <span class="food-add">+</span>
     </button>`

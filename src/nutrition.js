@@ -19,21 +19,32 @@ const FIELDS = [
   'serving_size',
   'nutriments',
   'additives_tags',
-  'nova_group'
+  'nova_group',
+  'nutriscore_grade'
 ].join(',')
 
 // Our canonical micronutrients and the units we store them in.
-// Each maps an Open Food Facts per-100g key + a factor to reach our unit.
+// Each maps an Open Food Facts per-100g key + a factor to reach our unit, plus a
+// daily reference value (`target`) and whether more is good (`goal`) or it's a
+// recommended ceiling (`limit`, e.g. sugar/salt) — used for the Today bars.
 export const MICRO_SPEC = {
-  sugars: { off: 'sugars_100g', unit: 'g', factor: 1, label: 'Sugars' },
-  fiber: { off: 'fiber_100g', unit: 'g', factor: 1, label: 'Fiber' },
-  satFat: { off: 'saturated-fat_100g', unit: 'g', factor: 1, label: 'Saturated fat' },
-  sodium: { off: 'sodium_100g', unit: 'mg', factor: 1000, label: 'Sodium' },
-  salt: { off: 'salt_100g', unit: 'g', factor: 1, label: 'Salt' },
-  vitaminC: { off: 'vitamin-c_100g', unit: 'mg', factor: 1000, label: 'Vitamin C' },
-  calcium: { off: 'calcium_100g', unit: 'mg', factor: 1000, label: 'Calcium' },
-  iron: { off: 'iron_100g', unit: 'mg', factor: 1000, label: 'Iron' },
-  potassium: { off: 'potassium_100g', unit: 'mg', factor: 1000, label: 'Potassium' }
+  sugars: { off: 'sugars_100g', unit: 'g', factor: 1, label: 'Sugars', target: 50, kind: 'limit' },
+  fiber: { off: 'fiber_100g', unit: 'g', factor: 1, label: 'Fiber', target: 30, kind: 'goal' },
+  satFat: { off: 'saturated-fat_100g', unit: 'g', factor: 1, label: 'Saturated fat', target: 20, kind: 'limit' },
+  sodium: { off: 'sodium_100g', unit: 'mg', factor: 1000, label: 'Sodium', target: 2300, kind: 'limit' },
+  salt: { off: 'salt_100g', unit: 'g', factor: 1, label: 'Salt', target: 6, kind: 'limit' },
+  vitaminC: { off: 'vitamin-c_100g', unit: 'mg', factor: 1000, label: 'Vitamin C', target: 80, kind: 'goal' },
+  calcium: { off: 'calcium_100g', unit: 'mg', factor: 1000, label: 'Calcium', target: 1000, kind: 'goal' },
+  iron: { off: 'iron_100g', unit: 'mg', factor: 1000, label: 'Iron', target: 14, kind: 'goal' },
+  potassium: { off: 'potassium_100g', unit: 'mg', factor: 1000, label: 'Potassium', target: 3500, kind: 'goal' }
+}
+
+// Daily micronutrient targets, lightly adjusted for the profile (iron differs by sex).
+export function microTargets(profile) {
+  const t = {}
+  for (const [k, spec] of Object.entries(MICRO_SPEC)) t[k] = spec.target
+  t.iron = profile?.sex === 'female' ? 16 : 8
+  return t
 }
 
 const num = (v) => {
@@ -64,8 +75,15 @@ function normalizeProduct(p, barcode) {
       micros
     },
     additives: parseAdditives(p.additives_tags || []),
-    nova: p.nova_group ? Number(p.nova_group) : null
+    nova: p.nova_group ? Number(p.nova_group) : null,
+    nutriscore: normalizeGrade(p.nutriscore_grade)
   }
+}
+
+// Open Food Facts reports a-e, or "unknown"/"not-applicable" — keep only a-e.
+function normalizeGrade(g) {
+  const v = String(g || '').toLowerCase()
+  return ['a', 'b', 'c', 'd', 'e'].includes(v) ? v : null
 }
 
 // Fetch + normalise. Returns { found:false } when the barcode is unknown.
@@ -125,7 +143,8 @@ export function scaleNutrition(product, grams, source = 'scan') {
     fat: round(product.per100.fat * f),
     micros,
     additives: product.additives,
-    nova: product.nova
+    nova: product.nova,
+    nutriscore: product.nutriscore
   }
 }
 
