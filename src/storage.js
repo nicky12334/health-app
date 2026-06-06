@@ -127,6 +127,34 @@ export function listHistory() {
     .map((d) => ({ date: d, totals: dayTotals(d), count: log[d].entries.length }))
 }
 
+// Recently eaten foods across all days, newest first, de-duplicated by name+qty
+// so the user can re-add a food in one tap without searching or scanning again.
+export function recentFoods(limit = 10) {
+  const log = readLog()
+  const all = []
+  for (const date of Object.keys(log)) {
+    for (const e of log[date].entries || []) all.push(e)
+  }
+  all.sort((a, b) => NUM(b.time) - NUM(a.time))
+
+  const seen = new Set()
+  const out = []
+  for (const e of all) {
+    const key = `${e.name}|${e.qty}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(e)
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+// Re-log an existing entry as a fresh entry today (new id + timestamp).
+export function reAddEntry(entry, date = todayKey()) {
+  const { id, time, ...rest } = entry
+  return addEntry({ ...rest, source: rest.source || 'recent' }, date)
+}
+
 export function clearAll() {
   localStorage.removeItem(LOG_KEY)
 }

@@ -1,17 +1,18 @@
 // App entry: navigation, scanner lifecycle and wiring the modules to the UI.
 
 import './style.css'
-import { addEntry, deleteEntry, todayKey } from './storage.js'
+import { addEntry, deleteEntry, reAddEntry, todayKey } from './storage.js'
 import { saveProfile, hasProfile } from './profile.js'
 import { parseQuickAdd } from './quickadd.js'
-import { lookupBarcode, scaleNutrition } from './nutrition.js'
+import { lookupBarcode, searchFoods, scaleNutrition } from './nutrition.js'
 import { Scanner, cameraSupported, isSecureForCamera } from './scanner.js'
 import {
   renderToday,
   renderHistory,
   renderProfile,
   renderScanScaffold,
-  renderScanResult
+  renderScanResult,
+  renderSearch
 } from './ui.js'
 
 const screenEl = document.getElementById('screen')
@@ -43,8 +44,17 @@ const api = {
     show('today')
   },
 
-  addProduct(product, grams) {
-    addEntry(scaleNutrition(product, grams))
+  addProduct(product, grams, source = 'scan') {
+    addEntry(scaleNutrition(product, grams, source))
+    show('today')
+  },
+
+  searchFoods(query) {
+    return searchFoods(query)
+  },
+
+  addRecent(entry) {
+    reAddEntry(entry)
     show('today')
   }
 }
@@ -53,6 +63,7 @@ function render(name) {
   if (name === 'today') renderToday(screenEl, api)
   else if (name === 'history') renderHistory(screenEl)
   else if (name === 'profile') renderProfile(screenEl, api)
+  else if (name === 'search') renderSearch(screenEl, api)
   else if (name === 'scan') startScan()
 }
 

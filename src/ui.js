@@ -2,7 +2,7 @@
 // wires events back through an `api` object provided by main.js
 // (api = { refresh, navigate, addQuickAdd, deleteEntry, saveProfile, lookup, addProduct }).
 
-import { todayKey, dateKey, getDay, dayTotals, listHistory } from './storage.js'
+import { todayKey, dateKey, getDay, dayTotals, listHistory, recentFoods } from './storage.js'
 import {
   loadProfile,
   calcTargets,
@@ -242,7 +242,8 @@ export function renderScanScaffold(el) {
 }
 
 // Render a looked-up product with a portion input + add button.
-export function renderScanResult(resultEl, product, api) {
+// `source` tags how it was found ("scan" | "search") on the stored entry.
+export function renderScanResult(resultEl, product, api, source = 'scan') {
   if (!product.found) {
     resultEl.innerHTML = `
       <section class="card">
@@ -297,8 +298,119 @@ export function renderScanResult(resultEl, product, api) {
     ev.preventDefault()
     const grams = parseFloat(resultEl.querySelector('#portion-input').value)
     if (!grams || grams <= 0) return
-    api.addProduct(product, grams)
+    api.addProduct(product, grams, source)
   })
+}
+
+// ---- Search ----------------------------------------------------------------
+
+function foodThumb(imageUrl, name) {
+  if (imageUrl) return `<img class="food-thumb" src="${esc(imageUrl)}" alt="" />`
+  const letter = (String(name || '?').trim().charAt(0) || '?').toUpperCase()
+  return `<span class="food-thumb ph">${esc(letter)}</span>`
+}
+
+function recentRow(e, i) {
+  const showQty = e.qty && e.source !== 'quick'
+  return `
+    <button class="food-row" data-recent="${i}">
+      ${foodThumb('', e.name)}
+      <div class="food-main">
+        <div class="food-name">${esc(e.name)}</div>
+        <div class="food-sub">${showQty ? `${fmt(e.qty)} g · ` : ''}P${fmt(e.protein)} C${fmt(
+    e.carbs
+  )} F${fmt(e.fat)}</div>
+      </div>
+      <div class="food-kcal"><b>${fmt(e.kcal)}</b><span>kcal</span></div>
+      <span class="food-add">+</span>
+    </button>`
+}
+
+function searchRow(p, i) {
+  return `
+    <button class="food-row" data-search="${i}">
+      ${foodThumb(p.imageUrl, p.name)}
+      <div class="food-main">
+        <div class="food-name">${esc(p.name)}</div>
+        <div class="food-sub">${p.brand ? esc(p.brand) + ' · ' : ''}per 100 g</div>
+      </div>
+      <div class="food-kcal"><b>${fmt(p.per100.kcal)}</b><span>kcal</span></div>
+      <span class="food-add">+</span>
+    </button>`
+}
+
+export function renderSearch(el, api) {
+  const recents = recentFoods(10)
+
+  el.innerHTML = `
+    <header class="screen-head">
+      <div><p class="eyebrow">Find food</p><h1>Search</h1></div>
+    </header>
+
+    <section class="card">
+      <form id="search-form" class="search-form">
+        <input id="search-input" type="search" enterkeyhint="search" autocomplete="off"
+               placeholder="e.g. egg, shepherd's pie, banana" />
+        <button class="btn" type="submit">Search</button>
+      </form>
+      <div id="search-state" class="search-state"></div>
+      <ul id="search-results" class="food-list"></ul>
+    </section>
+
+    <section id="search-detail"></section>
+
+    <section class="card">
+      <h2>Recently eaten</h2>
+      ${
+        recents.length
+          ? `<ul class="food-list">${recents.map(recentRow).join('')}</ul>`
+          : `<p class="muted">Foods you log will show here for one-tap re-adding.</p>`
+      }
+    </section>`
+
+  const form = el.querySelector('#search-form')
+  const input = el.querySelector('#search-input')
+  const stateEl = el.querySelector('#search-state')
+  const resultsEl = el.querySelector('#search-results')
+  const detailEl = el.querySelector('#search-detail')
+
+  let results = []
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault()
+    const q = input.value.trim()
+    if (!q) return
+    input.blur()
+    detailEl.innerHTML = ''
+    resultsEl.innerHTML = ''
+    stateEl.innerHTML = '<div class="spinner"></div>'
+    try {
+      results = await api.searchFoods(q)
+      stateEl.innerHTML = results.length
+        ? ''
+        : `<p class="muted">No matches for “${esc(q)}”. Try a simpler word, or use Quick add.</p>`
+      resultsEl.innerHTML = results.map(searchRow).join('')
+    } catch (err) {
+      stateEl.innerHTML = `<p class="muted">Search failed: ${esc(err.message)}. Check your connection.</p>`
+    }
+  })
+
+  // Tapping a result opens a portion form below the search box.
+  resultsEl.addEventListener('click', (ev) => {
+    const row = ev.target.closest('[data-search]')
+    if (!row) return
+    const product = results[Number(row.dataset.search)]
+    if (!product) return
+    renderScanResult(detailEl, product, api, 'search')
+    detailEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+
+  // Tapping a recent re-logs it immediately.
+  el.querySelectorAll('[data-recent]').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      api.addRecent(recents[Number(btn.dataset.recent)])
+    })
+  )
 }
 
 // ---- History ---------------------------------------------------------------

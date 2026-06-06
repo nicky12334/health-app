@@ -7,6 +7,20 @@
 import { parseAdditives } from './additives.js'
 
 const BASE = 'https://world.openfoodfacts.org/api/v2/product'
+const SEARCH = 'https://world.openfoodfacts.org/cgi/search.pl'
+
+// Fields we request for both barcode lookup and search results.
+const FIELDS = [
+  'code',
+  'product_name',
+  'brands',
+  'image_front_small_url',
+  'serving_quantity',
+  'serving_size',
+  'nutriments',
+  'additives_tags',
+  'nova_group'
+].join(',')
 
 // Our canonical micronutrients and the units we store them in.
 // Each maps an Open Food Facts per-100g key + a factor to reach our unit.
@@ -27,39 +41,17 @@ const num = (v) => {
   return typeof n === 'number' && isFinite(n) ? n : 0
 }
 
-// Fetch + normalise. Returns { found:false } when the barcode is unknown.
-export async function lookupBarcode(barcode) {
-  const fields = [
-    'product_name',
-    'brands',
-    'image_front_small_url',
-    'serving_quantity',
-    'serving_size',
-    'nutriments',
-    'additives_tags',
-    'nova_group'
-  ].join(',')
-
-  const res = await fetch(`${BASE}/${encodeURIComponent(barcode)}.json?fields=${fields}`)
-  if (!res.ok) throw new Error(`Lookup failed (${res.status})`)
-  const data = await res.json()
-
-  if (data.status !== 1 || !data.product) {
-    return { found: false, barcode }
-  }
-
-  const p = data.product
+// Normalise a raw Open Food Facts product into our product shape.
+function normalizeProduct(p, barcode) {
   const n = p.nutriments || {}
-
   const micros = {}
   for (const [key, spec] of Object.entries(MICRO_SPEC)) {
     if (n[spec.off] != null) micros[key] = num(n[spec.off]) * spec.factor
   }
-
   return {
     found: true,
-    barcode,
-    name: p.product_name?.trim() || `Item ${barcode}`,
+    barcode: barcode || p.code || '',
+    name: p.product_name?.trim() || `Item ${barcode || p.code || ''}`,
     brand: p.brands?.split(',')[0]?.trim() || '',
     imageUrl: p.image_front_small_url || '',
     servingG: num(p.serving_quantity) || null, // grams per serving, if known
@@ -76,8 +68,48 @@ export async function lookupBarcode(barcode) {
   }
 }
 
+// Fetch + normalise. Returns { found:false } when the barcode is unknown.
+export async function lookupBarcode(barcode) {
+  const res = await fetch(`${BASE}/${encodeURIComponent(barcode)}.json?fields=${FIELDS}`)
+  if (!res.ok) throw new Error(`Lookup failed (${res.status})`)
+  const data = await res.json()
+
+  if (data.status !== 1 || !data.product) {
+    return { found: false, barcode }
+  }
+  return normalizeProduct(data.product, barcode)
+}
+
+// Search foods by name (e.g. "egg", "shepherd's pie"). Returns normalised products,
+// best-known first, dropping ones with no usable nutrition data.
+export async function searchFoods(query, pageSize = 24) {
+  const q = query.trim()
+  if (!q) return []
+  const params = new URLSearchParams({
+    search_terms: q,
+    search_simple: '1',
+    action: 'process',
+    json: '1',
+    sort_by: 'popularity_key',
+    page_size: String(pageSize),
+    fields: FIELDS
+  })
+  const res = await fetch(`${SEARCH}?${params.toString()}`)
+  if (!res.ok) throw new Error(`Search failed (${res.status})`)
+  const data = await res.json()
+
+  return (data.products || [])
+    .map((p) => normalizeProduct(p))
+    .filter(
+      (p) =>
+        p.name &&
+        !p.name.startsWith('Item ') &&
+        (p.per100.kcal > 0 || p.per100.protein > 0 || p.per100.carbs > 0 || p.per100.fat > 0)
+    )
+}
+
 // Build a storable entry from a looked-up product + a portion in grams.
-export function scaleNutrition(product, grams) {
+export function scaleNutrition(product, grams, source = 'scan') {
   const f = grams / 100
   const micros = {}
   for (const [k, v] of Object.entries(product.per100.micros)) {
@@ -85,7 +117,7 @@ export function scaleNutrition(product, grams) {
   }
   return {
     name: product.brand ? `${product.name} (${product.brand})` : product.name,
-    source: 'scan',
+    source,
     qty: grams,
     kcal: round(product.per100.kcal * f),
     protein: round(product.per100.protein * f),
